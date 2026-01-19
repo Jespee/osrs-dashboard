@@ -18,6 +18,13 @@ Latest data source: https://github.com/Jespee/osrs-playercount
   </select>
 </label>
 
+<style>
+  /* Small polish like your example */
+  #chart { border-radius: 10px; }
+  .plotly .modebar { opacity: 0.15; transition: opacity 0.2s; }
+  .plotly .modebar:hover { opacity: 1; }
+</style>
+
 <div id="chart" style="width:100%;height:520px;"></div>
 
 <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
@@ -37,7 +44,6 @@ Latest data source: https://github.com/Jespee/osrs-playercount
     const lines = text.trim().split("\n");
     const header = lines[0].split(",").map(s => s.replaceAll('"','').trim());
     const rows = [];
-
     for (const line of lines.slice(1)) {
       if (!line.trim()) continue;
       const parts = line.split(",").map(s => s.replaceAll('"','').trim());
@@ -48,64 +54,176 @@ Latest data source: https://github.com/Jespee/osrs-playercount
     return rows;
   }
 
-  const layout = {
-    title: "OSRS Player Count",
-    xaxis: { title: "Time (UTC)" },
-    yaxis: { title: "Players" },
-    margin: { t: 60, r: 20, b: 60, l: 60 }
+  const config = {
+    responsive: true,
+    displaylogo: false,
+    modeBarButtonsToRemove: ["lasso2d", "select2d", "autoScale2d", "toggleSpikelines"]
   };
 
   async function loadAndPlot(key) {
     const url = endpoints[key];
-
     const resp = await fetch(url, { cache: "no-store" });
     const csv = await resp.text();
     const data = parseCSV(csv);
 
-    let x = [];
-    let y = [];
-    let name = "";
+    let x = [], y = [], subtitle = "";
 
     if (key === "recent_5min") {
-      // columns: timestamp_utc,players
       x = data.map(d => d.timestamp_utc);
       y = data.map(d => Number(d.players));
-      name = "Players (5-min)";
-      layout.title = "OSRS Player Count (last 14 days, 5-min)";
+      subtitle = "Last 14 days (5-minute samples)";
     } else {
-      // columns: bucket_utc,avg_players,min_players,max_players,n_samples
       x = data.map(d => d.bucket_utc);
       y = data.map(d => Number(d.avg_players));
-      name = "Average players";
-      layout.title = `OSRS Player Count (${key} average)`;
+      subtitle = `${key} average players`;
     }
 
-    const trace = {
+    // --- Main line trace (thicker line like the example) ---
+    const lineTrace = {
       x: x,
       y: y,
       type: "scatter",
       mode: "lines",
-      name: name
+      name: "Players",
+      line: { width: 3 },
+      hovertemplate: "%{x}<br><b>%{y:,}</b><extra></extra>"
     };
 
-    Plotly.react("chart", [trace], layout, { responsive: true });
+    // --- Find peak + most recent for callouts ---
+    const iPeak = y.indexOf(Math.max(...y));
+    const xPeak = x[iPeak];
+    const yPeak = y[iPeak];
+
+    const xLast = x[x.length - 1];
+    const yLast = y[y.length - 1];
+
+    // Circled markers (like your screenshot) using a marker-only trace
+    const calloutPoints = {
+      x: [xPeak, xLast],
+      y: [yPeak, yLast],
+      type: "scatter",
+      mode: "markers",
+      marker: {
+        size: 12,
+        color: "white",
+        line: { width: 2 }
+      },
+      hoverinfo: "skip",
+      showlegend: false
+    };
+
+    // --- Clean layout (title + subtitle, light grid, minimal chrome) ---
+    const layout = {
+      paper_bgcolor: "white",
+      plot_bgcolor: "white",
+      margin: { t: 90, r: 25, b: 80, l: 80 },
+      showlegend: false,
+      hovermode: "x unified",
+      hoverlabel: {
+        bgcolor: "white",
+        bordercolor: "rgba(0,0,0,0.15)",
+        font: { size: 12 }
+      },
+
+      title: {
+        text:
+          "<b>OSRS Player Count</b><br>" +
+          "<span style='font-size:14px;color:#555'>" + subtitle + "</span>",
+        x: 0.5,
+        xanchor: "center",
+        y: 0.96,
+        yanchor: "top"
+      },
+
+      xaxis: {
+        title: "<b>Time (UTC)</b>",
+        showgrid: true,
+        gridcolor: "rgba(0,0,0,0.06)",
+        zeroline: false,
+        showline: true,
+        linecolor: "rgba(0,0,0,0.35)",
+        linewidth: 1,
+        tickfont: { size: 12 }
+      },
+
+      yaxis: {
+        title: "<b>Players</b>",
+        showgrid: true,
+        gridcolor: "rgba(0,0,0,0.06)",
+        zeroline: false,
+        showline: true,
+        linecolor: "rgba(0,0,0,0.35)",
+        linewidth: 1,
+        tickfont: { size: 12 },
+        separatethousands: true
+      },
+
+      annotations: [
+        // Peak callout
+        {
+          x: xPeak,
+          y: yPeak,
+          xref: "x",
+          yref: "y",
+          text: "Peak<br><b>" + yPeak.toLocaleString() + "</b>",
+          showarrow: true,
+          arrowhead: 2,
+          arrowwidth: 1.5,
+          arrowcolor: "rgba(0,0,0,0.45)",
+          ax: 60,
+          ay: -40,
+          font: { size: 12, color: "rgba(0,0,0,0.55)" },
+          align: "left"
+        },
+
+        // Latest callout
+        {
+          x: xLast,
+          y: yLast,
+          xref: "x",
+          yref: "y",
+          text: "Latest<br><b>" + yLast.toLocaleString() + "</b>",
+          showarrow: true,
+          arrowhead: 2,
+          arrowwidth: 1.5,
+          arrowcolor: "rgba(0,0,0,0.45)",
+          ax: -70,
+          ay: 30,
+          font: { size: 12, color: "rgba(0,0,0,0.55)" },
+          align: "right"
+        },
+
+        // Footer line like the example
+        {
+          xref: "paper",
+          yref: "paper",
+          x: 0.5,
+          y: -0.22,
+          showarrow: false,
+          text: "<span style='color:#777'>Data pulled from Jespee/osrs-playercount. Graph by Jespee.</span>",
+          font: { size: 12 },
+          align: "center"
+        }
+      ]
+    };
+
+    Plotly.react("chart", [lineTrace, calloutPoints], layout, config);
   }
 
-  // initial
+  // Initial render
   const select = document.getElementById("res");
   await loadAndPlot(select.value);
 
-  // switch series
+  // Change resolution
   select.addEventListener("change", async () => {
     await loadAndPlot(select.value);
   });
 
-  // auto-refresh only makes sense for the 5-min recent series
+  // Auto-refresh only when viewing the 5-min recent series
   setInterval(async () => {
-    if (select.value === "recent_5min") {
-      await loadAndPlot(select.value);
-    }
+    if (select.value === "recent_5min") await loadAndPlot(select.value);
   }, 5 * 60 * 1000);
 
 })();
 </script>
+
