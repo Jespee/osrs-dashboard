@@ -7,72 +7,104 @@ format:
 
 Latest data source: https://github.com/Jespee/osrs-playercount
 
+<label for="res" style="display:block;margin:0.5rem 0;">
+  Resolution:
+  <select id="res">
+    <option value="recent_5min">Last 14 days (5-min)</option>
+    <option value="daily" selected>Daily average</option>
+    <option value="weekly">Weekly average</option>
+    <option value="monthly">Monthly average</option>
+    <option value="yearly">Yearly average</option>
+  </select>
+</label>
+
 <div id="chart" style="width:100%;height:520px;"></div>
 
 <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
 <script>
 (async function () {
-  const url = "https://raw.githubusercontent.com/Jespee/osrs-playercount/main/data/playercount.csv";
+  const base = "https://raw.githubusercontent.com/Jespee/osrs-playercount/main/data/rollups/";
 
-  // Fetch CSV (no caching so you always get the latest)
-  const resp = await fetch(url, { cache: "no-store" });
-  const csv = await resp.text();
-
-  // Parse CSV: expects header timestamp,players
-  const lines = csv.trim().split("\n");
-  const rows = lines.slice(1);
-
-  const x = [];
-  const y = [];
-
-  for (const row of rows) {
-    const parts = row.split(",");
-    if (parts.length < 2) continue;
-
-    const t = parts[0].replaceAll('"', '').trim();
-    const p = Number(parts[1].replaceAll('"', '').trim());
-
-    if (!t || Number.isNaN(p)) continue;
-    x.push(t);
-    y.push(p);
-  }
-
-  const trace = {
-    x: x,
-    y: y,
-    type: "scatter",
-    mode: "lines",
-    name: "Players"
+  const endpoints = {
+    recent_5min: base + "recent_5min.csv",
+    daily:       base + "daily.csv",
+    weekly:      base + "weekly.csv",
+    monthly:     base + "monthly.csv",
+    yearly:      base + "yearly.csv"
   };
 
+  function parseCSV(text) {
+    const lines = text.trim().split("\n");
+    const header = lines[0].split(",").map(s => s.replaceAll('"','').trim());
+    const rows = [];
+
+    for (const line of lines.slice(1)) {
+      if (!line.trim()) continue;
+      const parts = line.split(",").map(s => s.replaceAll('"','').trim());
+      const obj = {};
+      for (let i = 0; i < header.length; i++) obj[header[i]] = parts[i];
+      rows.push(obj);
+    }
+    return rows;
+  }
+
   const layout = {
-    title: "OSRS Player Count (updates every 5 minutes)",
+    title: "OSRS Player Count",
     xaxis: { title: "Time (UTC)" },
     yaxis: { title: "Players" },
     margin: { t: 60, r: 20, b: 60, l: 60 }
   };
 
-  Plotly.newPlot("chart", [trace], layout, { responsive: true });
+  async function loadAndPlot(key) {
+    const url = endpoints[key];
 
-  // Optional: auto-refresh the chart every 5 minutes while the page is open
-  setInterval(async () => {
-    const r2 = await fetch(url, { cache: "no-store" });
-    const csv2 = await r2.text();
-    const lines2 = csv2.trim().split("\n").slice(1);
+    const resp = await fetch(url, { cache: "no-store" });
+    const csv = await resp.text();
+    const data = parseCSV(csv);
 
-    const x2 = [];
-    const y2 = [];
-    for (const row of lines2) {
-      const parts = row.split(",");
-      if (parts.length < 2) continue;
-      const t = parts[0].replaceAll('"', '').trim();
-      const p = Number(parts[1].replaceAll('"', '').trim());
-      if (!t || Number.isNaN(p)) continue;
-      x2.push(t);
-      y2.push(p);
+    let x = [];
+    let y = [];
+    let name = "";
+
+    if (key === "recent_5min") {
+      // columns: timestamp_utc,players
+      x = data.map(d => d.timestamp_utc);
+      y = data.map(d => Number(d.players));
+      name = "Players (5-min)";
+      layout.title = "OSRS Player Count (last 14 days, 5-min)";
+    } else {
+      // columns: bucket_utc,avg_players,min_players,max_players,n_samples
+      x = data.map(d => d.bucket_utc);
+      y = data.map(d => Number(d.avg_players));
+      name = "Average players";
+      layout.title = `OSRS Player Count (${key} average)`;
     }
 
-    Plotly.react("chart", [{...trace, x: x2, y: y2}], layout, { responsive: true });
+    const trace = {
+      x: x,
+      y: y,
+      type: "scatter",
+      mode: "lines",
+      name: name
+    };
+
+    Plotly.react("chart", [trace], layout, { responsive: true });
+  }
+
+  // initial
+  const select = document.getElementById("res");
+  await loadAndPlot(select.value);
+
+  // switch series
+  select.addEventListener("change", async () => {
+    await loadAndPlot(select.value);
+  });
+
+  // auto-refresh only makes sense for the 5-min recent series
+  setInterval(async () => {
+    if (select.value === "recent_5min") {
+      await loadAndPlot(select.value);
+    }
   }, 5 * 60 * 1000);
 
 })();
